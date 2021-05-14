@@ -1,0 +1,53 @@
+#!/bin/bash
+
+if [ -z "${1}" -o -z "${2}" ]; then
+    echo "usage set-routeros-tls pkcs12 user@host"
+    exit 0
+fi
+
+TMP=$(mktemp -d)
+trap "[ -f ${TMP}/key.pem ] && shred ${TMP}/key.pem; rm -rf ${TMP}" EXIT
+
+openssl pkcs12 -in ${1} -out ${TMP}/cacert.pem -cacerts -nokeys -passin pass:""
+openssl pkcs12 -in ${1} -out ${TMP}/clcert.pem -clcerts -nokeys -passin pass:""
+openssl pkcs12 -in ${1} -out ${TMP}/key.pem -nocerts -nodes -passin pass:""
+
+CACERT=$(openssl x509 -noout -subject -nameopt multiline -in ${TMP}/cacert.pem | sed -n 's/ *commonName *= //p')
+CLCERT=$(openssl x509 -noout -subject -nameopt multiline -in ${TMP}/clcert.pem | sed -n 's/ *commonName *= //p')
+
+SSHOPT="-o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+
+scp ${SSHOPT} ${TMP}/cacert.pem ${2}:/${CACERT}.pem
+scp ${SSHOPT} ${TMP}/clcert.pem ${2}:/${CLCERT}.pem
+scp ${SSHOPT} ${TMP}/key.pem ${2}:/${CLCERT}.key
+
+cat <<EOF >${TMP}/installtls.rsc
+/ip service
+enable www;
+disable www-ssl;
+/certificate
+remove [find name=${CACERT}.pem_0];
+import file-name=${CACERT}.pem passphrase="";
+/file
+remove ${CACERT}.pem;
+/certificate
+remove [find name=${CLCERT}.pem_0];
+import file-name=${CLCERT}.pem passphrase="";
+/file
+remove ${CLCERT}.pem;
+/certificate
+import file-name=${CLCERT}.key passphrase="";
+/file
+remove ${CLCERT}.key;
+/ip service
+set www-ssl certificate=${CLCERT}.pem_0;
+enable www-ssl;
+disable www;
+/file
+remove installtls.rsc;
+EOF
+
+scp ${SSHOPT} ${TMP}/installtls.rsc ${2}:/
+sleep 2
+
+ssh ${SSHOPT} ${2} /import installtls.rsc

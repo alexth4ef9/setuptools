@@ -1,0 +1,26 @@
+#!/bin/bash
+
+set -e
+
+LNR=200
+LCR=300
+LNC=400
+
+if [ -z "${1}" ]; then
+    echo "usage set-ipmi-fans user@host"
+    exit 0
+fi
+
+USER=$(echo "${1}" | cut -d'@' -f1)
+HOST=$(echo "${1}" | cut -d'@' -f2)
+
+read -s -p "Password: " PASSWORD
+echo ""
+
+FANS=$(ipmitool -I lan -H ${HOST} -U ${USER} -P "${PASSWORD}" sensor list | grep -o '^FAN[0-9A-Z]\+')
+
+for FAN in ${FANS}; do
+    ipmitool -I lan -H ${HOST} -U ${USER} -P "${PASSWORD}" sensor thresh ${FAN} lower ${LNR} ${LCR} ${LNC}
+done
+
+exit 0

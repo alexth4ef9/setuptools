@@ -1,0 +1,52 @@
+#!/bin/bash
+
+set -e
+
+if [ -z "${1}" -o -z "${2}" ]; then
+    echo "usage load-routeros-config config user@host"
+    exit 0
+fi
+
+CONFIG=$(readlink -f ${1})
+
+TMP=$(mktemp -d)
+trap "rm -rf ${TMP}" EXIT
+
+while true; do
+    read -s -p "Password to set: " PASSWORD1
+    echo ""
+    read -s -p "Repeat password: " PASSWORD2
+    echo ""
+    if [ "${PASSWORD1}" == "${PASSWORD2}" ]; then
+        break
+    fi
+    echo "Password mismatch"
+done
+
+sed 's/##PASSWORD##/'"$(echo ${PASSWORD1} | sed -e 's/[\/&]/\\&/g')"'/g' ${CONFIG} >${TMP}/$(basename ${CONFIG})
+KEY=$(grep -Po 'public-key-file=\K[^;]+' ${CONFIG} || true)
+
+SSHOPT="-o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+
+if [ "$(ssh ${SSHOPT} ${2} ':put [/file get flash type]' | tr -d '\r')" == "disk" ]; then
+    SUBDIR=flash
+    SUBDIRSEP=${SUBDIR}/
+fi
+
+scp ${SSHOPT} ${TMP}/$(basename ${CONFIG}) ${2}:/${SUBDIR}
+if [ -n "${KEY}" ]; then
+    scp ${SSHOPT} $(dirname ${CONFIG})/$(basename ${KEY}) ${2}:/${SUBDIR}
+fi
+
+cat <<EOF >${TMP}/installconfig.rsc
+/system
+reset-configuration skip-backup=yes no-defaults=yes run-after-reset=${SUBDIRSEP}$(basename ${CONFIG});
+EOF
+
+scp ${SSHOPT} ${TMP}/installconfig.rsc ${2}:/
+sleep 2
+
+set +e
+ssh ${SSHOPT} ${2} /import installconfig.rsc
+
+exit 0
