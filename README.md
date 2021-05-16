@@ -9,6 +9,10 @@ This script changes the threshold to usable values for 120mm PWM fans (to stop t
 
 Requires ipmitool.
 
+## preseed/add-preseed
+
+Script for creating a new Debian boot image with a user supplied preseed file. It can creates BIOS (with optional enabled serial console) or UEFI boot images. It adds a new menu entry "Install custom preseed". Creating an UEFI image guestfish will fail if the current kernel in /boot is not readable by the current user.
+
 ## routeros/load-routeros-config
 
 Script for loading and applying a settings scripts for Mikrotik routers/switches (only RoutersOS, no SwitchOS).

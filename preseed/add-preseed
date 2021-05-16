@@ -1,0 +1,133 @@
+#!/bin/bash
+
+set -e
+
+usage() {
+    echo "usage: $(basename ${0}) [-u] [-s] -p preseed-file -f iso-file"
+    echo "       -p         preseed file, required"
+    echo "       -f         ISO file, required"
+    echo "       -u         creates UEFI image, default BIOS"
+    echo "       -s         enable serial console (ttyS0), BIOS only"
+}
+
+UEFI=0
+SERIAL=0
+while getopts ":p:f:ush" OPTS; do
+    case "${OPTS}" in
+        p)
+            PRESEED=${OPTARG}
+            ;;
+        f)
+            ISOFILE=${OPTARG}
+            ;;
+        u)
+            UEFI=1
+            ;;
+        s)
+            SERIAL=1
+            ;;
+        h)
+            usage
+            exit 0
+            ;;
+        :|*)
+            usage
+            exit 1
+            ;;
+    esac
+done
+if [ -z "${ISOFILE}" -o -z "${PRESEED}" ]; then
+    usage
+    exit 1
+fi
+
+PRESEED=$(readlink -f ${PRESEED})
+VOLUMEID=$(isoinfo -d -i ${ISOFILE} | grep -Po '(?<=Volume id: ).*')
+if [ ${UEFI} -eq 0 ]; then
+    IMGFILE=$(echo ${ISOFILE} | sed 's/\.iso$/-bios.iso/')
+else
+    IMGFILE=$(echo ${ISOFILE} | sed 's/\.iso$/-uefi.img/')
+fi
+if [ ${ISOFILE} == ${IMGFILE} ]; then
+    IMGFILE=${ISOFILE}-preseed
+fi
+
+TMPDIR=$(mktemp -d)
+TMPTAR=$(mktemp)
+
+cleanup() {
+    rm -rf ${TMPDIR}
+    rm -f ${TMPTAR}
+}
+
+trap cleanup EXIT
+
+7z x ${ISOFILE} -o${TMPDIR}
+
+if [ ${UEFI} -eq 0 ]; then
+    if [ ${SERIAL} -eq 1 ]; then
+        cat <<EOF >>${TMPDIR}/isolinux/isolinux.cfg
+serial 0 115200
+console 0
+EOF
+        cat <<EOF >>${TMPDIR}/isolinux/txt.cfg
+label installpreseed
+        menu label Install custom preseed
+        kernel /install.amd/vmlinuz
+        append console=ttyS0,115200n8 initrd=/install.amd/initrdps.gz --- quiet
+EOF
+    else
+        cat <<EOF >>${TMPDIR}/isolinux/txt.cfg
+label installpreseed
+        menu label Install custom preseed
+        kernel /install.amd/vmlinuz
+        append vga=788 initrd=/install.amd/initrdps.gz --- quiet
+EOF
+    fi
+else
+    cat <<EOF >>${TMPDIR}/boot/grub/grub.cfg
+menuentry 'Install custom preseed' {
+    set background_color=black
+    linux    /install.amd/vmlinuz vga=788 --- quiet
+    initrd   /install.amd/initrdps.gz
+}
+EOF
+fi
+
+pushd ${TMPDIR}/install.amd >/dev/null
+gunzip <initrd.gz >initrdps
+cp -f ${PRESEED} preseed.cfg
+echo preseed.cfg | cpio -H newc -o -A -F initrdps
+gzip initrdps
+rm -f preseed.cfg
+popd >/dev/null
+
+pushd ${TMPDIR} >/dev/null
+md5sum `find -type f | grep -v '\[BOOT]'` >md5sum.txt
+popd >/dev/null
+
+if [ ${UEFI} -eq 0 ]; then
+    mkisofs -D -r -V "${VOLUMEID}" -cache-inodes -J -l \
+        -b isolinux/isolinux.bin -c isolinux/boot.cat \
+        -no-emul-boot -boot-load-size 4 -boot-info-table \
+        -input-charset utf-8 \
+        -o ${IMGFILE} ${TMPDIR}
+    isohybrid ${IMGFILE}
+else
+    tar -C ${TMPDIR} -cf ${TMPTAR} .
+
+    guestfish -x <<EOF
+sparse ${IMGFILE} 512M
+launch
+part-disk /dev/sda gpt
+part-set-gpt-type /dev/sda 1 C12A7328-F81F-11D2-BA4B-00A0C93EC93B
+part-set-bootable /dev/sda 1 true
+mkfs vfat /dev/sda1
+mount /dev/sda1 /
+tar-in ${TMPTAR} /
+df-h
+shutdown
+EOF
+fi
+
+exit 0
