@@ -24,4 +24,4 @@ To apply new settings later, assign a ssh key to the defined user.
 ## routeros/set-routeros-tls
 
 Script for uploading a certificate chain and key and enabling webfig over tls.
-Only a certificate that is directly signed by the CA is supported (no sub CA). It is assumed the PKCS12 file has an empty password.
+Only a certificate that is directly signed by the CA is supported (no sub CA).

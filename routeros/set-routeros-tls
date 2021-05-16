@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -e
+
 if [ -z "${1}" -o -z "${2}" ]; then
     echo "usage set-routeros-tls pkcs12 user@host"
     exit 0
@@ -8,9 +10,14 @@ fi
 TMP=$(mktemp -d)
 trap "[ -f ${TMP}/key.pem ] && shred ${TMP}/key.pem; rm -rf ${TMP}" EXIT
 
-openssl pkcs12 -in ${1} -out ${TMP}/cacert.pem -cacerts -nokeys -passin pass:""
-openssl pkcs12 -in ${1} -out ${TMP}/clcert.pem -clcerts -nokeys -passin pass:""
-openssl pkcs12 -in ${1} -out ${TMP}/key.pem -nocerts -nodes -passin pass:""
+read -s -p "Password: " CERTPW
+echo ""
+export CERTPW
+
+openssl pkcs12 -in ${1} -out ${TMP}/cacert.pem -cacerts -nokeys -passin env:CERTPW
+openssl pkcs12 -in ${1} -out ${TMP}/clcert.pem -clcerts -nokeys -passin env:CERTPW
+openssl pkcs12 -in ${1} -out ${TMP}/key.pem -nocerts -nodes -passin env:CERTPW
+unset CERTPW
 
 CACERT=$(openssl x509 -noout -subject -nameopt multiline -in ${TMP}/cacert.pem | sed -n 's/ *commonName *= //p')
 CLCERT=$(openssl x509 -noout -subject -nameopt multiline -in ${TMP}/clcert.pem | sed -n 's/ *commonName *= //p')
@@ -51,3 +58,5 @@ scp ${SSHOPT} ${TMP}/installtls.rsc ${2}:/
 sleep 2
 
 ssh ${SSHOPT} ${2} /import installtls.rsc
+
+exit 0
